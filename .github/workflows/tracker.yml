@@ -28,5 +28,5 @@ jobs:
           ORIGIN: "ORD"
           DESTINATION: "DEL"
           DEPART_DATE: "2026-12-11"
-          PRICE_THRESHOLD: "1500"
+          PRICE_THRESHOLD: "2000"
         run: python tracker.py
