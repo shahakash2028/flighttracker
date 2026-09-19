@@ -4,6 +4,23 @@ on:
   schedule:
     - cron: '0 */8 * * *'
   workflow_dispatch:
+    inputs:
+      origin:
+        description: 'Departure Airport (IATA)'
+        required: true
+        default: 'ORD'
+      destination:
+        description: 'Arrival Airport (IATA)'
+        required: true
+        default: 'DEL'
+      depart_date:
+        description: 'Outbound Date (YYYY-MM-DD)'
+        required: true
+        default: '2026-12-11'
+      price_threshold:
+        description: 'Alert Price Threshold (USD)'
+        required: true
+        default: '800'
 
 jobs:
   run-tracker:
@@ -25,8 +42,8 @@ jobs:
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ORIGIN: "ORD"
-          DESTINATION: "DEL"
-          DEPART_DATE: "2026-12-11"
-          PRICE_THRESHOLD: "2000"
+          ORIGIN: ${{ inputs.origin || 'ORD' }}
+          DESTINATION: ${{ inputs.destination || 'DEL' }}
+          DEPART_DATE: ${{ inputs.depart_date || '2026-12-11' }}
+          PRICE_THRESHOLD: ${{ inputs.price_threshold || '800' }}
         run: python tracker.py
