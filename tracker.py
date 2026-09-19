@@ -1,10 +1,22 @@
 import logging
 import os
 import sys
+from importlib import import_module
 
 import requests
-from dotenv import load_dotenv
-from serpapi import GoogleSearch
+
+try:
+    GoogleSearch = import_module("serpapi").GoogleSearch
+except (ImportError, AttributeError):
+    GoogleSearch = None
+
+try:
+    load_dotenv = import_module("dotenv").load_dotenv
+except (ImportError, AttributeError):
+    def load_dotenv() -> None:
+        """Allow the tracker to run when python-dotenv is not installed."""
+        return None
+
 
 load_dotenv()
 
@@ -32,6 +44,10 @@ def load_config() -> dict[str, str]:
 
 
 def fetch_flights(api_key: str, origin: str, destination: str, depart_date: str) -> dict:
+    if GoogleSearch is None:
+        raise SystemExit(
+            "The 'serpapi' package is required. Install it with: pip install serpapi"
+        )
     params = {
         "engine": "google_flights",
         "departure_id": origin,
