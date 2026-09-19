@@ -1,32 +1,32 @@
-name: Flight Price Tracker
+name: Flight Tracker
 
 on:
   schedule:
-    - cron: "0 */8 * * *"
+    - cron: '0 */8 * * *'
   workflow_dispatch:
 
 jobs:
-  track:
+  run-tracker:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: pip install -r requirements.txt
 
       - name: Run flight price tracker
         env:
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-          ORIGIN: ${{ secrets.ORIGIN }}
-          DESTINATION: ${{ secrets.DESTINATION }}
-          DEPART_DATE: ${{ secrets.DEPART_DATE }}
-          PRICE_THRESHOLD: ${{ secrets.PRICE_THRESHOLD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ORIGIN: "ORD"
+          DESTINATION: "DEL"
+          DEPART_DATE: "2026-12-11"
+          PRICE_THRESHOLD: "450"
         run: python tracker.py
