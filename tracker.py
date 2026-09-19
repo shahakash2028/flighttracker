@@ -32,7 +32,7 @@ def load_config() -> dict[str, str]:
 
 
 def format_flight_time(date_str: str) -> str:
-    """Formats '2026-12-11 10:30' into 'Fri, December 11 • 10:30'"""
+    """Formats '2026-12-11 10:30' to 'Fri, December 11 • 10:30'"""
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
         return dt.strftime("%a, %B %d • %H:%M")
@@ -40,69 +40,44 @@ def format_flight_time(date_str: str) -> str:
         return date_str
 
 
-def fetch_flights(api_key: str, origin: str, destination: str, depart_date: str) -> dict:
+def build_leg_card(flights: list[dict]) -> str:
+    if not flights:
+        return ""
+    first_leg = flights[0]
+    last_leg = flights[-1]
+
+    dep = first_leg.get("departure_airport", {})
+    arr = last_leg.get("arrival_airport", {})
+
+    stops = len(flights) - 1
+    dep_time = format_flight_time(dep.get("time", ""))
+    arr_time = format_flight_time(arr.get("time", ""))
+
+    return (
+        f"<b>{dep.get('name', 'Origin')} ({dep.get('id', '')}) - "
+        f"{arr.get('name', 'Destination')} ({arr.get('id', '')})</b>\n"
+        f"🔄 Stops: {stops}\n"
+        f"🕒 Departure: {dep_time}\n"
+        f"🕒 Arrival: {arr_time}\n"
+    )
+
+
+def fetch_flight_data(api_key: str, origin: str, dest: str, depart_date: str, return_date: str | None = None) -> dict:
+    is_round_trip = bool(return_date)
     params = {
         "engine": "google_flights",
-        "departure_id": origin,
-        "arrival_id": destination,
+        "departure_id": origin.upper(),
+        "arrival_id": dest.upper(),
         "outbound_date": depart_date,
-        "type": 2,  # 2 = one-way, 1 = round-trip
+        "type": 1 if is_round_trip else 2,
         "currency": "USD",
         "hl": "en",
         "api_key": api_key,
     }
+    if is_round_trip:
+        params["return_date"] = return_date
+
     return GoogleSearch(params).get_dict()
-
-
-def parse_best_flight(results: dict) -> dict | None:
-    all_options = (results.get("best_flights") or []) + (results.get("other_flights") or [])
-    valid_options = [opt for opt in all_options if opt.get("price") is not None]
-
-    if not valid_options:
-        return None
-
-    cheapest = min(valid_options, key=lambda opt: float(opt.get("price", float("inf"))))
-    legs = cheapest.get("flights", [])
-
-    if not legs:
-        return None
-
-    first_leg = legs[0]
-    last_leg = legs[-1]
-
-    dep_airport = first_leg.get("departure_airport", {})
-    arr_airport = last_leg.get("arrival_airport", {})
-
-    dep_time_raw = dep_airport.get("time", "")
-    arr_time_raw = arr_airport.get("time", "")
-
-    # Booking provider or airline name
-    airline_or_vendor = first_leg.get("airline") or "Google Flights"
-    
-    # Try to grab booking link from the option or generate Google Flights direct prefill
-    booking_token = cheapest.get("booking_token")
-    if booking_token:
-        direct_booking_url = f"https://www.google.com/travel/flights/booking?token={booking_token}"
-    else:
-        direct_booking_url = (
-            f"https://www.google.com/travel/flights?q=Flights%20to%20"
-            f"{arr_airport.get('id')}%20from%20{dep_airport.get('id')}%20on%20{dep_time_raw.split()[0]}"
-        )
-
-    stops_count = len(legs) - 1
-
-    return {
-        "origin_name": dep_airport.get("name", "Origin"),
-        "origin_id": dep_airport.get("id", ""),
-        "dest_name": arr_airport.get("name", "Destination"),
-        "dest_id": arr_airport.get("id", ""),
-        "stops": stops_count,
-        "departure": format_flight_time(dep_time_raw),
-        "arrival": format_flight_time(arr_time_raw),
-        "price": float(cheapest["price"]),
-        "vendor": airline_or_vendor,
-        "booking_url": direct_booking_url,
-    }
 
 
 def send_telegram_alert(token: str, chat_id: str, text: str) -> None:
@@ -123,46 +98,68 @@ def send_telegram_alert(token: str, chat_id: str, text: str) -> None:
 def main() -> None:
     config = load_config()
     threshold = float(config["PRICE_THRESHOLD"])
+    return_date = os.getenv("RETURN_DATE")
 
-    results = fetch_flights(
+    results = fetch_flight_data(
         config["SERPAPI_API_KEY"],
         config["ORIGIN"],
         config["DESTINATION"],
         config["DEPART_DATE"],
+        return_date,
     )
 
     if error := results.get("error"):
         logging.error("SerpApi error: %s", error)
         sys.exit(1)
 
-    flight = parse_best_flight(results)
-    if not flight:
-        logging.warning("No flights found.")
+    all_options = (results.get("best_flights") or []) + (results.get("other_flights") or [])
+    valid_options = [opt for opt in all_options if opt.get("price") is not None]
+
+    if not valid_options:
+        logging.warning("No flight results found.")
         sys.exit(0)
 
-    price = flight["price"]
-    logging.info(f"Lowest fare: ${price} (Threshold: ${threshold})")
+    cheapest = min(valid_options, key=lambda opt: float(opt.get("price", float("inf"))))
+    price = float(cheapest["price"])
+    legs = cheapest.get("flights", [])
+
+    logging.info(
+        "Lowest fare %s -> %s on %s: $%.2f (Threshold: $%.2f)",
+        config["ORIGIN"],
+        config["DESTINATION"],
+        config["DEPART_DATE"],
+        price,
+        threshold,
+    )
 
     if price < threshold:
-        # Formatted to match your screenshot layout
+        vendor = legs[0].get("airline", "Google Flights") if legs else "Google Flights"
+        booking_token = cheapest.get("booking_token")
+        if booking_token:
+            direct_url = f"https://www.google.com/travel/flights/booking?token={booking_token}"
+        else:
+            direct_url = (
+                f"https://www.google.com/travel/flights?q=Flights%20to%20{config['DESTINATION'].upper()}"
+                f"%20from%20{config['ORIGIN'].upper()}%20on%20{config['DEPART_DATE']}"
+            )
+            if return_date:
+                direct_url += f"%20through%20{return_date}"
+
+        # Build card text
+        first_airport = legs[0].get("departure_airport", {}).get("name", config["ORIGIN"])
+        last_airport = legs[-1].get("arrival_airport", {}).get("name", config["DESTINATION"])
+
         message = (
-            f"📍 <b>{flight['origin_name']} - {flight['dest_name']}</b>\n\n"
-            f"{flight['origin_name']} ({flight['origin_id']}) - {flight['dest_name']} ({flight['dest_id']})\n"
-            f"🔄 Stops: {flight['stops']}\n"
-            f"🕒 Departure: {flight['departure']}\n"
-            f"🕒 Arrival: {flight['arrival']}\n\n"
-            f"🎫 <b>{flight['vendor']}</b>: <b>${price:.2f} USD</b>\n"
-            f"💳 <a href=\"{flight['booking_url']}\"><b>Buy ticket</b></a>"
+            f"📍 <b>{first_airport} - {last_airport}</b>\n\n"
+            f"{build_leg_card(legs)}\n"
+            f"🎫 <b>{vendor}</b>: <b>${price:.2f} USD</b>\n"
+            f"💳 <a href=\"{direct_url}\"><b>Buy ticket</b></a>"
         )
 
-        send_telegram_alert(
-            config["TELEGRAM_BOT_TOKEN"],
-            config["TELEGRAM_CHAT_ID"],
-            message,
-        )
-        logging.info("Telegram notification sent.")
+        send_telegram_alert(config["TELEGRAM_BOT_TOKEN"], config["TELEGRAM_CHAT_ID"], message)
+        logging.info("Telegram alert sent successfully.")
     else:
-        logging.info("Price is above threshold; alert suppressed.")
+        logging.info("Current lowest fare ($%.2f) is above threshold ($%.2f). Alert skipped.", price, threshold)
 
 
 if __name__ == "__main__":
